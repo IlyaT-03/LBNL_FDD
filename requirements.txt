@@ -1,0 +1,9 @@
+torch
+numpy<2.0
+pandas<2.0
+scikit-learn
+scipy
+matplotlib
+tqdm
+PyYAML
+huggingface_hub
