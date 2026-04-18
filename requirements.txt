@@ -7,3 +7,4 @@ matplotlib
 tqdm
 PyYAML
 huggingface_hub
+xgboost
