@@ -7,6 +7,8 @@ data/raw/
 data/interim/
 data/processed/
 
+aws
+
 outputs/
 saved_models/
 
