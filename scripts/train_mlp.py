@@ -11,6 +11,7 @@ from sklearn.preprocessing import StandardScaler
 from lbnl_fdd.data.sliding_window import SlidingWindowDataset
 from lbnl_fdd.data.selected_window import SelectedWindowsDataset
 from lbnl_fdd.models.mlp.mlp import MLP
+from lbnl_fdd.training.evaluate import eval_windows_accuracy_f1
 from lbnl_fdd.training.train_mlp import train_mlp
 
 
@@ -33,15 +34,19 @@ def parse_args():
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=0.0)
+    parser.add_argument("--patience", type=int, default=None)
 
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--average", type=str, default="macro")
 
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--standardize", action="store_true")
+    parser.add_argument("--eval_train", action="store_true")
+    parser.add_argument("--eval_test", action="store_true")
 
     parser.add_argument("--train_windows_file", type=str, default=None)
     parser.add_argument("--val_windows_file", type=str, default=None)
+    parser.add_argument("--test_windows_file", type=str, default=None)
 
     return parser.parse_args()
 
@@ -58,6 +63,58 @@ def load_split(data_dir: Path, split: str):
     df = pd.read_csv(data_dir / f"{split}_df.csv", index_col=[0, 1])
     target = pd.read_csv(data_dir / f"{split}_target.csv", index_col=[0, 1]).iloc[:, 0]
     return df, target
+
+
+def build_dataset(
+    df: pd.DataFrame,
+    target: pd.Series,
+    window_size: int,
+    stride: int,
+    windows_file: str | None,
+    split_name: str,
+):
+    if windows_file is None:
+        return SlidingWindowDataset(
+            df=df,
+            target=target,
+            window_size=window_size,
+            stride=stride,
+        )
+
+    print(f"Using selected {split_name} windows: {windows_file}")
+    windows_df = pd.read_json(windows_file, lines=True)
+    return SelectedWindowsDataset(
+        df=df,
+        windows_df=windows_df,
+    )
+
+
+def evaluate_and_save(
+    model,
+    dataset,
+    batch_size: int,
+    device: str,
+    average: str,
+    save_dir: Path,
+    split_name: str,
+):
+    metrics, y_true, y_pred = eval_windows_accuracy_f1(
+        model=model,
+        window_ds=dataset,
+        batch_size=batch_size,
+        device=device,
+        average=average,
+    )
+
+    print(f"{split_name.capitalize()} metrics (best model):")
+    for k, v in metrics.items():
+        print(f"{k}: {v}")
+
+    with open(save_dir / f"{split_name}_metrics.json", "w", encoding="utf-8") as f:
+        json.dump(metrics, f, ensure_ascii=False, indent=2)
+
+    np.save(save_dir / f"{split_name}_y_true.npy", y_true)
+    np.save(save_dir / f"{split_name}_y_pred.npy", y_pred)
 
 
 def main():
@@ -77,6 +134,7 @@ def main():
 
     train_df, train_target = load_split(data_dir, "train")
     val_df, val_target = load_split(data_dir, "val")
+    test_df, test_target = load_split(data_dir, "test")
 
     if args.standardize:
         print("Applying StandardScaler...")
@@ -94,38 +152,42 @@ def main():
             columns=val_df.columns,
         )
 
-    if args.train_windows_file is None:
-        train_ds = SlidingWindowDataset(
-            df=train_df,
-            target=train_target,
-            window_size=args.window_size,
-            stride=args.stride,
-        )
-    else:
-        print(f"Using selected train windows: {args.train_windows_file}")
-        train_windows_df = pd.read_json(args.train_windows_file, lines=True)
-        train_ds = SelectedWindowsDataset(
-            df=train_df,
-            windows_df=train_windows_df,
+        test_df = pd.DataFrame(
+            scaler.transform(test_df),
+            index=test_df.index,
+            columns=test_df.columns,
         )
 
-    if args.val_windows_file is None:
-        val_ds = SlidingWindowDataset(
-            df=val_df,
-            target=val_target,
-            window_size=args.window_size,
-            stride=args.stride,
-        )
-    else:
-        print(f"Using selected val windows: {args.val_windows_file}")
-        val_windows_df = pd.read_json(args.val_windows_file, lines=True)
-        val_ds = SelectedWindowsDataset(
-            df=val_df,
-            windows_df=val_windows_df,
-        )
+    train_ds = build_dataset(
+        df=train_df,
+        target=train_target,
+        window_size=args.window_size,
+        stride=args.stride,
+        windows_file=args.train_windows_file,
+        split_name="train",
+    )
+
+    val_ds = build_dataset(
+        df=val_df,
+        target=val_target,
+        window_size=args.window_size,
+        stride=args.stride,
+        windows_file=args.val_windows_file,
+        split_name="val",
+    )
+
+    test_ds = build_dataset(
+        df=test_df,
+        target=test_target,
+        window_size=args.window_size,
+        stride=args.stride,
+        windows_file=args.test_windows_file,
+        split_name="test",
+    )
 
     print(f"Train windows: {len(train_ds)}")
     print(f"Val windows: {len(val_ds)}")
+    print(f"Test windows: {len(test_ds)}")
     print(f"Num features: {train_df.shape[1]}")
     print(f"Num classes: {train_target.nunique()}")
 
@@ -139,6 +201,12 @@ def main():
         device=device,
     )
 
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    print(f"Total parameters: {total_params:,}")
+    print(f"Trainable parameters: {trainable_params:,}")
+
     train_mlp(
         model=model,
         train_ds=train_ds,
@@ -151,7 +219,39 @@ def main():
         save_dir=str(save_dir),
         save_best=True,
         average=args.average,
+        patience=args.patience,
     )
+
+    best_ckpt_path = save_dir / "best_model.pt"
+    if not best_ckpt_path.exists():
+        print("best_model.pt not found, skipping post-training evaluation.")
+        return
+
+    print(f"Loading best model from: {best_ckpt_path}")
+    checkpoint = torch.load(best_ckpt_path, map_location=device)
+    model.load_state_dict(checkpoint["model_state_dict"])
+
+    if args.eval_train:
+        evaluate_and_save(
+            model=model,
+            dataset=train_ds,
+            batch_size=args.batch_size,
+            device=device,
+            average=args.average,
+            save_dir=save_dir,
+            split_name="train",
+        )
+
+    if args.eval_test:
+        evaluate_and_save(
+            model=model,
+            dataset=test_ds,
+            batch_size=args.batch_size,
+            device=device,
+            average=args.average,
+            save_dir=save_dir,
+            split_name="test",
+        )
 
 
 if __name__ == "__main__":
