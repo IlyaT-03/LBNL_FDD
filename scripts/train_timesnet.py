@@ -1,6 +1,7 @@
 import argparse
 import json
 import random
+import time
 from pathlib import Path
 
 import numpy as np
@@ -24,7 +25,7 @@ def parse_args():
     parser.add_argument("--run_name", type=str, default="timesnet_run1")
 
     parser.add_argument("--window_size", type=int, default=100)
-    parser.add_argument("--stride", type=int, default=10)
+    parser.add_argument("--stride", type=int, default=1)
 
     parser.add_argument("--d_model", type=int, default=64)
     parser.add_argument("--d_ff", type=int, default=128)
@@ -34,7 +35,7 @@ def parse_args():
     parser.add_argument("--dropout", type=float, default=0.1)
 
     parser.add_argument("--epochs", type=int, default=20)
-    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=0.0)
     parser.add_argument("--patience", type=int, default=None)
@@ -109,7 +110,7 @@ def evaluate_and_save(
         average=average,
     )
 
-    print(f"{split_name.capitalize()} metrics (best model):")
+    print(f"{split_name.capitalize()} metrics:")
     for k, v in metrics.items():
         print(f"{k}: {v}")
 
@@ -212,6 +213,8 @@ def main():
     print(f"Total parameters: {total_params:,}")
     print(f"Trainable parameters: {trainable_params:,}")
 
+    train_start_time = time.perf_counter()
+
     train_timesnet(
         model=model,
         train_ds=train_ds,
@@ -224,12 +227,39 @@ def main():
         save_dir=str(save_dir),
         save_best=True,
         average=args.average,
-        #patience=args.patience,
+        # patience=args.patience,
     )
+
+    train_total_time = time.perf_counter() - train_start_time
+    avg_epoch_time = train_total_time / args.epochs
+
+    print(f"Total training time: {train_total_time:.2f} sec")
+    print(f"Average epoch time: {avg_epoch_time:.2f} sec")
+
+    timing_metrics = {
+        "total_training_time_sec": train_total_time,
+        "average_epoch_time_sec": avg_epoch_time,
+        "epochs": args.epochs,
+    }
+
+    with open(save_dir / "training_time.json", "w", encoding="utf-8") as f:
+        json.dump(timing_metrics, f, ensure_ascii=False, indent=2)
+
+    if args.eval_test:
+        print("Evaluating test set using last-epoch model...")
+        evaluate_and_save(
+            model=model,
+            dataset=test_ds,
+            batch_size=args.batch_size,
+            device=device,
+            average=args.average,
+            save_dir=save_dir,
+            split_name="test_last_epoch",
+        )
 
     best_ckpt_path = save_dir / "best_model.pt"
     if not best_ckpt_path.exists():
-        print("best_model.pt not found, skipping post-training evaluation.")
+        print("best_model.pt not found, skipping best-model post-training evaluation.")
         return
 
     print(f"Loading best model from: {best_ckpt_path}")
@@ -248,6 +278,7 @@ def main():
         )
 
     if args.eval_test:
+        print("Evaluating test set using best model...")
         evaluate_and_save(
             model=model,
             dataset=test_ds,
