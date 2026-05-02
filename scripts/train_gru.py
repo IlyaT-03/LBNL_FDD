@@ -11,30 +11,29 @@ from sklearn.preprocessing import StandardScaler
 
 from lbnl_fdd.data.sliding_window import SlidingWindowDataset
 from lbnl_fdd.data.selected_window import SelectedWindowsDataset
-from lbnl_fdd.models.gnn.gnn import GNN_TAM
-from lbnl_fdd.training.evaluate import eval_windows_accuracy_f1
-from lbnl_fdd.training.train_gnn import train_gnn
+from lbnl_fdd.models.gru import GRUClassifier
+from lbnl_fdd.training.evaluate_timesnet import eval_windows_accuracy_f1_timesnet
+from lbnl_fdd.training.train_timesnet import train_timesnet
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train GNN_TAM")
+    parser = argparse.ArgumentParser(description="Train GRUClassifier")
 
     parser.add_argument("--dataset", type=str, required=True, help="Dataset name, e.g. SDAHU")
     parser.add_argument("--data_root", type=str, default="data/processed")
     parser.add_argument("--save_root", type=str, default="outputs/runs")
-    parser.add_argument("--run_name", type=str, default="gnn_tam_run1")
+    parser.add_argument("--run_name", type=str, default="gru_run1")
 
     parser.add_argument("--window_size", type=int, default=100)
     parser.add_argument("--stride", type=int, default=1)
 
-    parser.add_argument("--n_gnn", type=int, default=1)
-    parser.add_argument("--gsl_type", type=str, default="relu")
-    parser.add_argument("--n_hidden", type=int, default=1024)
-    parser.add_argument("--alpha", type=float, default=0.1)
-    parser.add_argument("--k", type=int, default=None)
+    parser.add_argument("--hidden_dim", type=int, default=128)
+    parser.add_argument("--num_layers", type=int, default=2)
+    parser.add_argument("--dropout", type=float, default=0.0)
+    parser.add_argument("--bidirectional", action="store_true")
 
     parser.add_argument("--epochs", type=int, default=20)
-    parser.add_argument("--batch_size", type=int, default=512)
+    parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=0.0)
     parser.add_argument("--patience", type=int, default=None)
@@ -101,7 +100,7 @@ def evaluate_and_save(
     save_dir: Path,
     split_name: str,
 ):
-    metrics, y_true, y_pred = eval_windows_accuracy_f1(
+    metrics, y_true, y_pred = eval_windows_accuracy_f1_timesnet(
         model=model,
         window_ds=dataset,
         batch_size=batch_size,
@@ -148,45 +147,20 @@ def main():
             index=train_df.index,
             columns=train_df.columns,
         )
-
         val_df = pd.DataFrame(
             scaler.transform(val_df),
             index=val_df.index,
             columns=val_df.columns,
         )
-
         test_df = pd.DataFrame(
             scaler.transform(test_df),
             index=test_df.index,
             columns=test_df.columns,
         )
 
-    train_ds = build_dataset(
-        df=train_df,
-        target=train_target,
-        window_size=args.window_size,
-        stride=args.stride,
-        windows_file=args.train_windows_file,
-        split_name="train",
-    )
-
-    val_ds = build_dataset(
-        df=val_df,
-        target=val_target,
-        window_size=args.window_size,
-        stride=args.stride,
-        windows_file=args.val_windows_file,
-        split_name="val",
-    )
-
-    test_ds = build_dataset(
-        df=test_df,
-        target=test_target,
-        window_size=args.window_size,
-        stride=args.stride,
-        windows_file=args.test_windows_file,
-        split_name="test",
-    )
+    train_ds = build_dataset(train_df, train_target, args.window_size, args.stride, args.train_windows_file, "train")
+    val_ds = build_dataset(val_df, val_target, args.window_size, args.stride, args.val_windows_file, "val")
+    test_ds = build_dataset(test_df, test_target, args.window_size, args.stride, args.test_windows_file, "test")
 
     print(f"Train windows: {len(train_ds)}")
     print(f"Val windows: {len(val_ds)}")
@@ -194,16 +168,14 @@ def main():
     print(f"Num features: {train_df.shape[1]}")
     print(f"Num classes: {train_target.nunique()}")
 
-    model = GNN_TAM(
-        n_nodes=int(train_df.shape[1]),
+    model = GRUClassifier(
+        n_features=int(train_df.shape[1]),
         window_size=int(args.window_size),
         n_classes=int(train_target.nunique()),
-        n_gnn=int(args.n_gnn),
-        gsl_type=args.gsl_type,
-        n_hidden=int(args.n_hidden),
-        alpha=float(args.alpha),
-        k=args.k,
-        device=device,
+        hidden_dim=int(args.hidden_dim),
+        num_layers=int(args.num_layers),
+        dropout=float(args.dropout),
+        bidirectional=bool(args.bidirectional),
     )
 
     total_params = sum(p.numel() for p in model.parameters())
@@ -214,7 +186,7 @@ def main():
 
     train_start_time = time.perf_counter()
 
-    train_gnn(
+    train_timesnet(
         model=model,
         train_ds=train_ds,
         val_ds=val_ds,
@@ -226,7 +198,6 @@ def main():
         save_dir=str(save_dir),
         save_best=True,
         average=args.average,
-        # patience=args.patience,
     )
 
     train_total_time = time.perf_counter() - train_start_time
@@ -235,26 +206,21 @@ def main():
     print(f"Total training time: {train_total_time:.2f} sec")
     print(f"Average epoch time: {avg_epoch_time:.2f} sec")
 
-    timing_metrics = {
-        "total_training_time_sec": train_total_time,
-        "average_epoch_time_sec": avg_epoch_time,
-        "epochs": args.epochs,
-    }
-
     with open(save_dir / "training_time.json", "w", encoding="utf-8") as f:
-        json.dump(timing_metrics, f, ensure_ascii=False, indent=2)
+        json.dump(
+            {
+                "total_training_time_sec": train_total_time,
+                "average_epoch_time_sec": avg_epoch_time,
+                "epochs": args.epochs,
+            },
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
 
     if args.eval_test:
         print("Evaluating test set using last-epoch model...")
-        evaluate_and_save(
-            model=model,
-            dataset=test_ds,
-            batch_size=args.batch_size,
-            device=device,
-            average=args.average,
-            save_dir=save_dir,
-            split_name="test_last_epoch",
-        )
+        evaluate_and_save(model, test_ds, args.batch_size, device, args.average, save_dir, "test_last_epoch")
 
     best_ckpt_path = save_dir / "best_model.pt"
     if not best_ckpt_path.exists():
@@ -266,28 +232,11 @@ def main():
     model.load_state_dict(checkpoint["model_state_dict"])
 
     if args.eval_train:
-        print("Evaluating train set using best model...")
-        evaluate_and_save(
-            model=model,
-            dataset=train_ds,
-            batch_size=args.batch_size,
-            device=device,
-            average=args.average,
-            save_dir=save_dir,
-            split_name="train",
-        )
+        evaluate_and_save(model, train_ds, args.batch_size, device, args.average, save_dir, "train")
 
     if args.eval_test:
         print("Evaluating test set using best model...")
-        evaluate_and_save(
-            model=model,
-            dataset=test_ds,
-            batch_size=args.batch_size,
-            device=device,
-            average=args.average,
-            save_dir=save_dir,
-            split_name="test",
-        )
+        evaluate_and_save(model, test_ds, args.batch_size, device, args.average, save_dir, "test")
 
 
 if __name__ == "__main__":

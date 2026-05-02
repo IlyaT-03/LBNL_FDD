@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from lbnl_fdd.models.gnn.gsl import GSL
+from lbnl_fdd.models.gnn_tam.gsl import GSL
 
 
 class GCLayer(nn.Module):
