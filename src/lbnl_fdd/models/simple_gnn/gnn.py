@@ -13,84 +13,90 @@ class GCNLayer(nn.Module):
         x:   [B, N, F]
         adj: [N, N]
         """
-        h = self.linear(x)                      # [B, N, out_dim]
-        h = torch.einsum("ij,bjf->bif", adj, h)  # graph aggregation
+        h = self.linear(x)
+        h = torch.einsum("ij,bjf->bif", adj, h)
         return h
 
 
 class SimpleGNN(nn.Module):
+    """
+    Simplified GNN baseline close to the paper:
+    GCN -> BatchNorm -> ReLU -> min readout
+    GCN -> BatchNorm -> ReLU -> min readout
+    readout1 + readout2 -> FC
+    """
+
     def __init__(
         self,
         n_nodes: int,
         window_size: int,
         n_classes: int,
-        hidden_dim: int = 128,
-        n_layers: int = 2,
-        pool: str = "mean",
-        graph_type: str = "corr",   # corr | knn | attention | full
-        dropout: float = 0.1,
+        hidden_dim: int = 64,
+        graph_type: str = "corr",
+        dropout: float = 0.0,
+        alpha: float = 0.1,
     ):
         super().__init__()
 
-        if graph_type not in {'full', 'corr', 'attention', 'knn'}:
+        if graph_type not in {"corr", "knn", "attention", "full"}:
             raise ValueError(f"Unknown graph_type: {graph_type}")
 
-        if pool not in {"mean", "max", "min"}:
-            raise ValueError(f"Unknown pool: {pool}")
-
+        self.n_nodes = n_nodes
         self.graph_type = graph_type
-        self.pool = pool
         self.dropout = nn.Dropout(dropout)
+        self.alpha = alpha
 
-        self.layers = nn.ModuleList()
-        self.layers.append(GCNLayer(window_size, hidden_dim))
+        self.gcn1 = GCNLayer(window_size, hidden_dim)
+        self.bn1 = nn.BatchNorm1d(n_nodes)
 
-        for _ in range(n_layers - 1):
-            self.layers.append(GCNLayer(hidden_dim, hidden_dim))
+        self.gcn2 = GCNLayer(hidden_dim, hidden_dim)
+        self.bn2 = nn.BatchNorm1d(n_nodes)
 
-        # learnable adjacency for attention graph
-        if self.graph_type == "attention":
-            self.node_emb = nn.Parameter(torch.randn(n_nodes, hidden_dim))
+        if graph_type == "attention":
+            self.node_emb = nn.Parameter(torch.empty(n_nodes, hidden_dim))
             nn.init.xavier_uniform_(self.node_emb)
 
         self.classifier = nn.Linear(hidden_dim, n_classes)
 
     def build_attention_adj(self) -> torch.Tensor:
-        """
-        Build learnable attention-based adjacency matrix.
-
-        Returns:
-            adj: [N, N]
-        """
-        scores = self.node_emb @ self.node_emb.T          # [N, N]
-        scores.fill_diagonal_(float("-inf"))              # remove self-attention
-        adj = torch.softmax(scores, dim=-1)               # row-normalized attention
+        scores = self.node_emb @ self.node_emb.T
+        scores = torch.tanh(self.alpha * scores)
+        scores.fill_diagonal_(float("-inf"))
+        adj = torch.softmax(scores, dim=-1)
         return adj
+
+    def min_readout(self, h: torch.Tensor) -> torch.Tensor:
+        """
+        h: [B, N, H]
+        returns: [B, H]
+        """
+        return h.min(dim=1).values
 
     def forward(self, x: torch.Tensor, adj: torch.Tensor | None = None) -> torch.Tensor:
         """
         x:   [B, N, T]
-        adj: [N, N] for corr/knn, ignored for attention
+        adj: [N, N] for corr/knn/full, None for attention
         """
         if self.graph_type == "attention":
             adj = self.build_attention_adj()
         elif adj is None:
-            raise ValueError("adj must be provided for corr/knn graph")
+            raise ValueError("adj must be provided for corr/knn/full graph")
 
         adj = adj.to(x.device)
-        h = x
 
-        for layer in self.layers:
-            h = layer(h, adj)
-            h = F.relu(h)
-            h = self.dropout(h)
+        h1 = self.gcn1(x, adj)
+        h1 = self.bn1(h1)
+        h1 = F.relu(h1)
+        h1 = self.dropout(h1)
+        r1 = self.min_readout(h1)
 
-        if self.pool == "mean":
-            h = h.mean(dim=1)
-        elif self.pool == "max":
-            h = h.max(dim=1).values
-        elif self.pool == "min":
-            h = h.min(dim=1).values
+        h2 = self.gcn2(h1, adj)
+        h2 = self.bn2(h2)
+        h2 = F.relu(h2)
+        h2 = self.dropout(h2)
+        r2 = self.min_readout(h2)
 
+        h = r1 + r2
         out = self.classifier(h)
+
         return out

@@ -17,7 +17,7 @@ from lbnl_fdd.training.evaluate import eval_windows_accuracy_f1
 from lbnl_fdd.training.train_gnn_tam import train_gnn
 
 
-class SimpleGNNWrapper(torch.nn.Module):
+class SimpleGNNWithAdj(torch.nn.Module):
     def __init__(self, model: SimpleGNN, adj: torch.Tensor | None):
         super().__init__()
         self.model = model
@@ -32,7 +32,7 @@ class SimpleGNNWrapper(torch.nn.Module):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Train SimpleGNN")
+    parser = argparse.ArgumentParser(description="Train SimpleGNN baseline")
 
     parser.add_argument("--dataset", type=str, required=True, help="Dataset name, e.g. SDAHU")
     parser.add_argument("--data_root", type=str, default="data/processed")
@@ -51,10 +51,9 @@ def parse_args():
     parser.add_argument("--k", type=int, default=5)
     parser.add_argument("--threshold", type=float, default=0.3)
 
-    parser.add_argument("--hidden_dim", type=int, default=128)
-    parser.add_argument("--n_layers", type=int, default=2)
-    parser.add_argument("--pool", type=str, default="mean", choices=["mean", "max", "min"])
-    parser.add_argument("--dropout", type=float, default=0.1)
+    parser.add_argument("--hidden_dim", type=int, default=64)
+    parser.add_argument("--dropout", type=float, default=0.0)
+    parser.add_argument("--alpha", type=float, default=0.1)
 
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch_size", type=int, default=512)
@@ -81,6 +80,7 @@ def set_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
@@ -109,6 +109,7 @@ def build_dataset(
 
     print(f"Using selected {split_name} windows: {windows_file}")
     windows_df = pd.read_json(windows_file, lines=True)
+
     return SelectedWindowsDataset(
         df=df,
         windows_df=windows_df,
@@ -119,9 +120,11 @@ def build_adj(args, train_df: pd.DataFrame, device: str):
     if args.graph_type == "attention":
         return None
 
+    n_nodes = int(train_df.shape[1])
     train_data = torch.tensor(train_df.values, dtype=torch.float32)
 
     if args.graph_type == "corr":
+        print(f"Building correlation graph: threshold={args.threshold}, top_k={args.k}")
         adj = corr_graph(
             data=train_data,
             threshold=args.threshold,
@@ -129,14 +132,16 @@ def build_adj(args, train_df: pd.DataFrame, device: str):
         )
 
     elif args.graph_type == "knn":
+        print(f"Building KNN graph: k={args.k}")
         adj = knn_graph(
             data=train_data,
             k=args.k,
         )
 
     elif args.graph_type == "full":
+        print("Building full graph")
         adj = full_graph(
-            n_nodes=int(train_df.shape[1]),
+            n_nodes=n_nodes,
         )
 
     else:
@@ -178,6 +183,7 @@ def main():
     set_seed(args.seed)
 
     device = "cuda" if args.device == "cuda" and torch.cuda.is_available() else "cpu"
+
     data_dir = Path(args.data_root) / args.dataset
     save_dir = Path(args.save_root) / args.dataset / args.run_name
     save_dir.mkdir(parents=True, exist_ok=True)
@@ -241,27 +247,29 @@ def main():
         split_name="test",
     )
 
+    n_nodes = int(train_df.shape[1])
+    n_classes = int(train_target.nunique())
+
     print(f"Train windows: {len(train_ds)}")
     print(f"Val windows: {len(val_ds)}")
     print(f"Test windows: {len(test_ds)}")
-    print(f"Num features: {train_df.shape[1]}")
-    print(f"Num classes: {train_target.nunique()}")
+    print(f"Num features: {n_nodes}")
+    print(f"Num classes: {n_classes}")
     print(f"Graph type: {args.graph_type}")
 
     adj = build_adj(args, train_df, device)
 
     base_model = SimpleGNN(
-        n_nodes=int(train_df.shape[1]),
+        n_nodes=n_nodes,
         window_size=int(args.window_size),
-        n_classes=int(train_target.nunique()),
+        n_classes=n_classes,
         hidden_dim=int(args.hidden_dim),
-        n_layers=int(args.n_layers),
-        pool=args.pool,
         graph_type=args.graph_type,
         dropout=float(args.dropout),
+        alpha=float(args.alpha),
     )
 
-    model = SimpleGNNWrapper(
+    model = SimpleGNNWithAdj(
         model=base_model,
         adj=adj,
     )
@@ -317,6 +325,7 @@ def main():
         )
 
     best_ckpt_path = save_dir / "best_model.pt"
+
     if not best_ckpt_path.exists():
         print("best_model.pt not found, skipping best-model post-training evaluation.")
         return
