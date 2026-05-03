@@ -51,7 +51,7 @@ def parse_args():
     parser.add_argument("--k", type=int, default=5)
     parser.add_argument("--threshold", type=float, default=0.3)
 
-    parser.add_argument("--hidden_dim", type=int, default=64)
+    parser.add_argument("--hidden_dim", type=int, default=1024)
     parser.add_argument("--dropout", type=float, default=0.0)
     parser.add_argument("--alpha", type=float, default=0.1)
 
