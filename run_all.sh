@@ -2,7 +2,7 @@
 set -euo pipefail
 
 DATASET="${DATASET:-SDAHU}"
-DATA_ROOT="${DATA_ROOT:-data/preprocessed_data}"
+DATA_ROOT="${DATA_ROOT:-/workspace/LBNL_FDD/data/processed}"
 SAVE_ROOT="${SAVE_ROOT:-outputs/runs}"
 DEVICE="${DEVICE:-cuda}"
 SEED="${SEED:-42}"
@@ -84,7 +84,7 @@ run_cmd "timesnet_${DATASET}" \
   "${COMMON_ARGS[@]}" \
   --epochs "$TIMESNET_EPOCHS" \
   --run_name "timesnet_w${WINDOW_SIZE}_s${STRIDE}_seed${SEED}" \
-  --batch_size 16 \
+  --batch_size 512 \
   --lr 1e-3 \
   --d_model 64 \
   --d_ff 128 \
@@ -94,11 +94,11 @@ run_cmd "timesnet_${DATASET}" \
   --dropout 0.1
 
 run_cmd "cnn1d_${DATASET}" \
-  python scripts/train_cnn1d.py \
+  python scripts/train_1dcnn.py \
   "${COMMON_ARGS[@]}" \
   --epochs "$TIMESNET_EPOCHS" \
   --run_name "cnn1d_w${WINDOW_SIZE}_s${STRIDE}_seed${SEED}" \
-  --batch_size 16 \
+  --batch_size 512 \
   --lr 1e-3 \
   --conv1_multiplier 4 \
   --conv2_multiplier 16 \
@@ -114,7 +114,7 @@ run_cmd "informer_${DATASET}" \
   "${COMMON_ARGS[@]}" \
   --epochs "$TIMESNET_EPOCHS" \
   --run_name "informer_w${WINDOW_SIZE}_s${STRIDE}_seed${SEED}" \
-  --batch_size 16 \
+  --batch_size 512 \
   --lr 1e-3 \
   --d_model 128 \
   --d_ff 256 \
@@ -129,10 +129,10 @@ run_cmd "gru_${DATASET}" \
   "${COMMON_ARGS[@]}" \
   --epochs "$TIMESNET_EPOCHS" \
   --run_name "gru_w${WINDOW_SIZE}_s${STRIDE}_seed${SEED}" \
-  --batch_size 16 \
+  --batch_size 512 \
   --lr 1e-3 \
   --hidden_dim 128 \
-  --n_layers 2 \
+  --num_layers 2 \
   --dropout 0.1
 
 run_cmd "nonstationary_transformer_${DATASET}" \
@@ -140,7 +140,7 @@ run_cmd "nonstationary_transformer_${DATASET}" \
   "${COMMON_ARGS[@]}" \
   --epochs "$TIMESNET_EPOCHS" \
   --run_name "nonstationary_transformer_w${WINDOW_SIZE}_s${STRIDE}_seed${SEED}" \
-  --batch_size 16 \
+  --batch_size 512 \
   --lr 1e-3 \
   --d_model 128 \
   --d_ff 256 \

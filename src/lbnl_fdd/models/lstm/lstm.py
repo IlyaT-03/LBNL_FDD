@@ -1,0 +1,66 @@
+import torch
+from torch import nn
+from lbnl_fdd.models.tslib import ensure_btf
+
+
+class LSTMClassifier(nn.Module):
+    """
+    LSTM classifier for sliding-window classification.
+    Input:
+        x: (B, T, F) or (B, F, T)
+    Output:
+        logits: (B, C)
+    """
+    def __init__(
+        self,
+        n_features: int,
+        window_size: int,
+        n_classes: int,
+        hidden_dim: int = 128,
+        num_layers: int = 2,
+        dropout: float = 0.0,
+        bidirectional: bool = False,
+        concat_layers: int = 1,
+    ):
+        super().__init__()
+        self.n_features = n_features
+        self.window_size = window_size
+        self.n_classes = n_classes
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
+        self.bidirectional = bidirectional
+        self.concat_layers = concat_layers
+
+        lstm_dropout = dropout if num_layers > 1 else 0.0
+        self.lstm = nn.LSTM(
+            input_size=n_features,
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=lstm_dropout,
+            bidirectional=bidirectional,
+        )
+
+        directions = 2 if bidirectional else 1
+        classifier_input = (
+            hidden_dim * num_layers * directions
+            if concat_layers
+            else hidden_dim * directions
+        )
+        self.linear1 = nn.Linear(classifier_input, hidden_dim)
+        self.dropout = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(hidden_dim, n_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = ensure_btf(x, n_features=self.n_features)
+        _, (h, _) = self.lstm(x)
+        # h: (num_layers * directions, B, hidden_dim)
+        if self.concat_layers:
+            h = h.permute(1, 0, 2)
+            h = h.reshape(h.size(0), -1)
+        else:
+            h = h[-1]
+        x = self.linear1(h)
+        x = torch.relu(x)
+        x = self.dropout(x)
+        return self.linear2(x)

@@ -17,9 +17,14 @@ src/lbnl_fdd/models/gru/__init__.py
 src/lbnl_fdd/models/gru/gru.py
 src/lbnl_fdd/models/informer/__init__.py
 src/lbnl_fdd/models/informer/informer.py
+src/lbnl_fdd/models/lstm/__init__.py
+src/lbnl_fdd/models/lstm/lstm.py
 src/lbnl_fdd/models/mlp/mlp.py
 src/lbnl_fdd/models/nonstationary_transformer/__init__.py
 src/lbnl_fdd/models/nonstationary_transformer/nonstationary_transformer.py
+src/lbnl_fdd/models/simple_gnn/__init__.py
+src/lbnl_fdd/models/simple_gnn/gnn.py
+src/lbnl_fdd/models/simple_gnn/graph_builders.py
 src/lbnl_fdd/models/timesnet/__init__.py
 src/lbnl_fdd/models/timesnet/timesnet.py
 src/lbnl_fdd/models/tslib/__init__.py
@@ -32,7 +37,9 @@ src/lbnl_fdd/models/tslib/projectors.py
 src/lbnl_fdd/training/__init__.py
 src/lbnl_fdd/training/evaluate.py
 src/lbnl_fdd/training/evaluate_timesnet.py
+src/lbnl_fdd/training/evaluate_tsai.py
 src/lbnl_fdd/training/train_gnn_tam.py
 src/lbnl_fdd/training/train_mlp.py
 src/lbnl_fdd/training/train_timesnet.py
+src/lbnl_fdd/training/train_tsai.py
 src/lbnl_fdd/utils/__init__.py

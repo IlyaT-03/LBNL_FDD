@@ -19,5 +19,5 @@ saved_models/
 *.npz
 *.parquet
 *.csv
-
+*.yml
 .DS_Store

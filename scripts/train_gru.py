@@ -50,6 +50,8 @@ def parse_args():
     parser.add_argument("--val_windows_file", type=str, default=None)
     parser.add_argument("--test_windows_file", type=str, default=None)
 
+    parser.add_argument("--concat_layers", type=int, choices=[0, 1], default=1)
+
     return parser.parse_args()
 
 
@@ -174,8 +176,9 @@ def main():
         n_classes=int(train_target.nunique()),
         hidden_dim=int(args.hidden_dim),
         num_layers=int(args.num_layers),
+        concat_layers=bool(args.concat_layers),
         dropout=float(args.dropout),
-        bidirectional=bool(args.bidirectional),
+        bidirectional=bool(args.bidirectional)
     )
 
     total_params = sum(p.numel() for p in model.parameters())
